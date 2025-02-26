@@ -1,38 +1,42 @@
+require("dotenv").config();
 const express = require("express");
-const app = express();
 const http = require("http");
 const { Server } = require("socket.io");
-const ACTIONS = require("./Actions");
 const cors = require("cors");
 const axios = require("axios");
-const server = http.createServer(app);
-require("dotenv").config();
+const ACTIONS = require("./Actions");
 
+const app = express();
+const server = http.createServer(app);
+
+// ✅ Check if JDoodle credentials are loaded
+console.log("JDoodle Client ID:", process.env.JDOODLE_CLIENTID);
+console.log("JDoodle Client Secret:", process.env.JDOODLE_CLIENTSECRET);
+
+// ✅ Language Configuration for JDoodle
 const languageConfig = {
-  python3: { versionIndex: "3" },
-  java: { versionIndex: "3" },
-  cpp: { versionIndex: "4" },
-  nodejs: { versionIndex: "3" },
-  c: { versionIndex: "4" },
-  ruby: { versionIndex: "3" },
-  go: { versionIndex: "3" },
-  scala: { versionIndex: "3" },
-  bash: { versionIndex: "3" },
-  sql: { versionIndex: "3" },
-  pascal: { versionIndex: "2" },
-  csharp: { versionIndex: "3" },
-  php: { versionIndex: "3" },
-  swift: { versionIndex: "3" },
-  rust: { versionIndex: "3" },
-  r: { versionIndex: "3" },
+    python3: { versionIndex: "3" },
+    java: { versionIndex: "3" },
+    cpp14: { versionIndex: "4" },  // C++14
+    cpp17: { versionIndex: "5" },  // C++17
+    c: { versionIndex: "4" },
 };
 
-// Enable CORS
-app.use(cors());
+// ✅ Language Configuration for Judge0
+const judge0Languages = {
+    python3: 71,
+    java: 62,
+    cpp: 54,  // C++17
+    cpp14: 52,
+    cpp17: 54,
+    c: 50,
+};
 
-// Parse JSON bodies
+// ✅ Enable CORS & JSON Parsing
+app.use(cors());
 app.use(express.json());
 
+// ✅ Setup WebSocket Server
 const io = new Server(server, {
   cors: {
     origin: "http://localhost:3000",
@@ -40,25 +44,23 @@ const io = new Server(server, {
   },
 });
 
+// ✅ Manage Users in Rooms
 const userSocketMap = {};
 const getAllConnectedClients = (roomId) => {
   return Array.from(io.sockets.adapter.rooms.get(roomId) || []).map(
-    (socketId) => {
-      return {
-        socketId,
-        username: userSocketMap[socketId],
-      };
-    }
+    (socketId) => ({
+      socketId,
+      username: userSocketMap[socketId],
+    })
   );
 };
 
+// ✅ WebSocket Events
 io.on("connection", (socket) => {
-  // console.log('Socket connected', socket.id);
   socket.on(ACTIONS.JOIN, ({ roomId, username }) => {
     userSocketMap[socket.id] = username;
     socket.join(roomId);
     const clients = getAllConnectedClients(roomId);
-    // notify that new user join
     clients.forEach(({ socketId }) => {
       io.to(socketId).emit(ACTIONS.JOINED, {
         clients,
@@ -68,49 +70,99 @@ io.on("connection", (socket) => {
     });
   });
 
-  // sync the code
   socket.on(ACTIONS.CODE_CHANGE, ({ roomId, code }) => {
     socket.in(roomId).emit(ACTIONS.CODE_CHANGE, { code });
   });
-  // when new user join the room all the code which are there are also shows on that persons editor
+
   socket.on(ACTIONS.SYNC_CODE, ({ socketId, code }) => {
     io.to(socketId).emit(ACTIONS.CODE_CHANGE, { code });
   });
 
-  // leave room
   socket.on("disconnecting", () => {
     const rooms = [...socket.rooms];
-    // leave all the room
     rooms.forEach((roomId) => {
       socket.in(roomId).emit(ACTIONS.DISCONNECTED, {
         socketId: socket.id,
         username: userSocketMap[socket.id],
       });
     });
-
     delete userSocketMap[socket.id];
-    socket.leave();
   });
 });
 
+// ✅ Compilation Endpoint (JDoodle & Judge0)
 app.post("/compile", async (req, res) => {
-  const { code, language } = req.body;
+    const { code, language, method } = req.body;
+    console.log("Received compilation request:", { code, language, method });
 
-  try {
-    const response = await axios.post("https://api.jdoodle.com/v1/execute", {
-      script: code,
-      language: language,
-      versionIndex: languageConfig[language].versionIndex,
-      clientId: process.env.jDoodle_clientId,
-      clientSecret: process.env.kDoodle_clientSecret,
-    });
+    try {
+        let response;
 
-    res.json(response.data);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to compile code" });
-  }
+        // JDoodle Compiler
+        if (method === "jdoodle") {
+            if (!languageConfig[language]) {
+                return res.status(400).json({ error: "Invalid language for JDoodle" });
+            }
+
+            console.log("JDoodle request data:", {
+                script: code,
+                language: language,
+                versionIndex: languageConfig[language].versionIndex,
+                clientId: process.env.JDOODLE_CLIENTID,
+                clientSecret: process.env.JDOODLE_CLIENTSECRET,
+            });
+
+            response = await axios.post("https://api.jdoodle.com/v1/execute", {
+                script: code,
+                language: language,
+                versionIndex: languageConfig[language].versionIndex,
+                clientId: process.env.JDOODLE_CLIENTID,
+                clientSecret: process.env.JDOODLE_CLIENTSECRET,
+            });
+
+            // ✅ Handle JDoodle API Errors
+            if (response.data.error) {
+                return res.status(500).json({ error: response.data.error });
+            }
+
+            console.log("JDoodle response:", response.data);
+            res.json(response.data);
+        } 
+        
+        // Judge0 Compiler
+        else if (method === "judge0") {
+            if (!judge0Languages[language]) {
+                return res.status(400).json({ error: "Invalid language for Judge0" });
+            }
+
+            console.log("Sending request to Judge0");
+
+            const judge0Response = await axios.post(
+                "https://ce.judge0.com/submissions/?base64_encoded=false&wait=true",
+                {
+                    source_code: code,
+                    language_id: judge0Languages[language],
+                    stdin: "",
+                }
+            );
+
+            console.log("Judge0 response:", judge0Response.data);
+
+            res.json({
+                output: judge0Response.data.stdout || judge0Response.data.stderr,
+                status: judge0Response.data.status.description,
+            });
+        } 
+        
+        else {
+            res.status(400).json({ error: "Invalid compilation method" });
+        }
+    } catch (error) {
+        console.error("Compilation error:", error.response?.data || error.message);
+        res.status(500).json({ error: "Failed to compile code" });
+    }
 });
 
+// ✅ Start the Server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server is runnint on port ${PORT}`));
+server.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
