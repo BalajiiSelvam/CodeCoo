@@ -9,11 +9,11 @@ const ACTIONS = require("./Actions");
 const app = express();
 const server = http.createServer(app);
 
-// ✅ Check if JDoodle credentials are loaded
+// Check if JDoodle credentials are loaded
 console.log("JDoodle Client ID:", process.env.JDOODLE_CLIENTID);
 console.log("JDoodle Client Secret:", process.env.JDOODLE_CLIENTSECRET);
 
-// ✅ Language Configuration for JDoodle
+// Language Configuration for JDoodle
 const languageConfig = {
     python3: { versionIndex: "3" },
     java: { versionIndex: "3" },
@@ -22,7 +22,7 @@ const languageConfig = {
     c: { versionIndex: "4" },
 };
 
-// ✅ Language Configuration for Judge0
+// Language Configuration for Judge0
 const judge0Languages = {
     python3: 71,
     java: 62,
@@ -32,19 +32,22 @@ const judge0Languages = {
     c: 50,
 };
 
-// ✅ Enable CORS & JSON Parsing
+// Enable CORS & JSON Parsing
 app.use(cors());
 app.use(express.json());
 
-// ✅ Setup WebSocket Server
+// Setup WebSocket Server
 const io = new Server(server, {
   cors: {
     origin: "http://localhost:3000",
     methods: ["GET", "POST"],
   },
 });
+app.get("/", (req, res) => {
+  res.send("Server is running!");
+});
 
-// ✅ Manage Users in Rooms
+// Manage Users in Rooms
 const userSocketMap = {};
 const getAllConnectedClients = (roomId) => {
   return Array.from(io.sockets.adapter.rooms.get(roomId) || []).map(
@@ -55,7 +58,7 @@ const getAllConnectedClients = (roomId) => {
   );
 };
 
-// ✅ WebSocket Events
+// WebSocket Events
 io.on("connection", (socket) => {
   socket.on(ACTIONS.JOIN, ({ roomId, username }) => {
     userSocketMap[socket.id] = username;
@@ -78,19 +81,42 @@ io.on("connection", (socket) => {
     io.to(socketId).emit(ACTIONS.CODE_CHANGE, { code });
   });
 
-  socket.on("disconnecting", () => {
-    const rooms = [...socket.rooms];
-    rooms.forEach((roomId) => {
-      socket.in(roomId).emit(ACTIONS.DISCONNECTED, {
-        socketId: socket.id,
-        username: userSocketMap[socket.id],
-      });
-    });
-    delete userSocketMap[socket.id];
-  });
+  // New REMOVE_USER event handler
+  // socket.on(ACTIONS.REMOVE_USER, ({ roomId, socketId }) => {
+  //   const socketToRemove = io.sockets.sockets.get(socketId);
+  //   if (socketToRemove) {
+  //     // Ensure the requester is Admin (optional server-side check)
+  //     const clients = getAllConnectedClients(roomId);
+  //     const requester = clients.find((client) => client.socketId === socket.id);
+  //     const target = clients.find((client) => client.socketId === socketId);
+      
+  //     if (requester && clients.indexOf(requester) === 0) { // First client is Admin
+  //       socketToRemove.leave(roomId);
+  //       io.to(roomId).emit(ACTIONS.USER_REMOVED, { 
+  //         socketId,
+  //         username: userSocketMap[socketId] // Include username for better feedback
+  //       });
+  //       socketToRemove.disconnect(); // Forcefully disconnect the user
+  //       delete userSocketMap[socketId]; // Clean up the map
+  //     } else {
+  //       socket.emit("error", { message: "Only Admin can remove users" });
+  //     }
+  //   }
+  // });
+
+  // socket.on("disconnecting", () => {
+  //   const rooms = [...socket.rooms];
+  //   rooms.forEach((roomId) => {
+  //     socket.in(roomId).emit(ACTIONS.DISCONNECTED, {
+  //       socketId: socket.id,
+  //       username: userSocketMap[socket.id],
+  //     });
+  //   });
+  //   delete userSocketMap[socket.id];
+  // });
 });
 
-// ✅ Compilation Endpoint (JDoodle & Judge0)
+// Compilation Endpoint (JDoodle & Judge0)
 app.post("/compile", async (req, res) => {
     const { code, language, method } = req.body;
     console.log("Received compilation request:", { code, language, method });
@@ -120,7 +146,6 @@ app.post("/compile", async (req, res) => {
                 clientSecret: process.env.JDOODLE_CLIENTSECRET,
             });
 
-            // ✅ Handle JDoodle API Errors
             if (response.data.error) {
                 return res.status(500).json({ error: response.data.error });
             }
@@ -163,6 +188,6 @@ app.post("/compile", async (req, res) => {
     }
 });
 
-// ✅ Start the Server
+// Start the Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
